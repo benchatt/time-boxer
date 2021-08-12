@@ -1,4 +1,5 @@
 import re
+import yaml
 from math import ceil
 from datetime import datetime, date, time, timedelta
 from calendar import day_name, day_abbr
@@ -281,7 +282,12 @@ class TaskList:
                 continue
             app_datetime_end = app_datetime_obj + timedelta(minutes=parsed_dur)
             valid = True
-        self.appointments.append([appt_name,app_datetime_obj,app_datetime_end])
+        self.appointments.append(
+            {
+                "name": appt_name,
+                "start": app_datetime_obj.isoformat(),
+                "end": app_datetime_end.isoformat()
+            })
 
     def prioritize(self):
         #re-order by priority AND raise issue if schedule exceeds available
@@ -304,3 +310,6 @@ if __name__ == '__main__':
             continue
     print('entries',sch.entries)
     print('appts',sch.appointments)
+    out_dict = {"tasks": sch.entries, "appointments":sch.appointments}
+    with open('newtasks.yaml','w') as stream:
+        yaml.safe_dump(out_dict,stream)
