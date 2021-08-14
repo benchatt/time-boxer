@@ -1,5 +1,7 @@
 from datetime import date, time, datetime, timedelta
+from copy import deepcopy as copy
 import yaml
+import random
 
 WORK_STYLE_DEFAULTS = {
     "week_start": 0,
@@ -30,8 +32,6 @@ class Schedule:
             pass
         self.insert_appointments(task_list['appointments'])
         self.insert_tasks(task_list['tasks'])
-        self.gap_tasks()
-        self.randomize_tasks()
 
     def entry_can_fit(self,start=None,end=None):
         if start is None or end is None:
@@ -52,14 +52,27 @@ class Schedule:
     def change_per_date(self,isodate,**kwargs):
         self.variances[f'd{isodate}'] = kwargs
     
-    def out_of_variance(self,start_time,end_time):
+    def out_of_variance(self,start_time: datetime,end_time: datetime):
+        now = datetime.now()
         for varkey,variance in self.variances.items():
+            hit = False
             if varkey.startswith('w'):
-                pass
+                if int(varkey[1:]) in (start_time.weekday,end_time.weekday):
+                    hit = True
             elif varkey.startswith('m'):
-                pass
+                if int(varkey[1:]) in (start_time.day,end_time.day):
+                    hit = True
             elif varkey.startswith('d'):
-                pass
+                if start_time < datetime.fromisoformat(varkey[1:]) < end_time:
+                    hit = True
+            if hit:
+                if 'busy' in variance.keys():
+                    busy_start = datetime.combine(now.date,variance['busy'][0])
+                    busy_end = datetime.combine(now.date,variance['busy'][1])
+                    if busy_start < start_time < busy_end or \
+                        busy_start < end_time < busy_end:
+                        return False
+        return True
 
     def get_variance_adds(self):
         pass
@@ -75,7 +88,7 @@ class Schedule:
             if is_weekday:
                 block_ranges = self.workstyle['afterhours_blocks']
             else:
-                pass
+                return None
                 #shouldn't have secondaries on the weekend
         else:
             if is_weekday:
@@ -97,7 +110,7 @@ class Schedule:
                         end_time = start_time + cycle_time
                         if self.entry_can_fit(start_time,end_time):
                             accepted_blocks.append({'start':start_time.isoformat(),
-                                                    'break': break_spot.isoformat(),
+                                                    'break':break_spot.isoformat(),
                                                     'end':end_time.isoformat()})
                             break
                 else:
@@ -107,7 +120,6 @@ class Schedule:
         return accepted_blocks
     
     def assign_block(self, task, block):
-        break_time = timedelta(minutes=self.workstyle['break_dur'])
         self.all_entries[block['start']] = {
             'name': task['name'],
             'break': block['break'],
@@ -131,9 +143,10 @@ class Schedule:
 
     def insert_tasks(self,tasks):
         tasks = sorted(tasks,key = lambda x: x['priority'])
+        freeblocks = self.get_freeblocks()
+        tasks = self.break_tasks(tasks)
         tasks = self.gap_tasks(tasks)
         tasks = self.randomize_tasks(tasks)
-        freeblocks = self.get_freeblocks()
         remaining = len(freeblocks)
         got_secondary = False
         for task in tasks:
@@ -147,8 +160,47 @@ class Schedule:
             self.assign_block(task,freeblocks[len(freeblocks)-remaining])
             remaining += -1
 
-    def gap_tasks(self):
-        pass
+    def break_tasks(self,tasks):
+        outtasks = []
+        for task in tasks:
+            remaining_min = task['duration']
+            while remaining_min > 0:
+                if remaining_min < self.workstyle['timebox_dur']:
+                    this_min = remaining_min
+                    remaining_min = 0
+                else:
+                    this_min = self.workstyle['timebox_dur']
+                    remaining_min -= self.workstyle['timebox_dur']
+                outtask = copy(task)
+                outtask['duration'] = this_min
+                outtasks.append(outtask)
+        return outtasks              
 
-    def randomize_tasks(self):
-        pass
+    def gap_tasks(self,tasks):
+        indices = range(len(tasks))[1:-1]
+        random.shuffle(indices)
+        gapped = 0
+        moves = []
+        for i in indices:
+            if (gapped + 1) < len(tasks) * (1 - self.workstyle['sameness']):
+                break
+            if tasks[i]['name'] in [tasks[i-1]['name'],tasks[i+1]['name']]:
+                moves.append(i)
+                gapped += 1
+        for m in moves:
+            outtask = tasks.pop(m)
+            tasks.insert(m+1,outtask)
+        return tasks
+
+    def randomize_tasks(self,tasks):
+        from_indices = range(len(tasks))[:-1]
+        to_indices = range(len(tasks))[1:]
+        random.shuffle(from_indices)
+        random.shuffle(to_indices)
+        moves = []
+        for i in range(round(len(tasks) * self.workstyle['randomness'])):
+            moves.append((from_indices[i],to_indices[i]))
+        for m in moves:
+            outtask = tasks.pop(m[0])
+            tasks.insert(m[1],outtask)
+        return tasks
